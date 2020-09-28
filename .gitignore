@@ -1,0 +1,6 @@
+*.out
+*.log
+*.py
+*.o
+*.mod
+run/
