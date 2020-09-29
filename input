@@ -1,0 +1,6 @@
+initial_electronic_state    22
+number_of_bath_DoFs         200
+number_of_trajectories      100000
+number_of_timesteps         21000
+timestep_duration           0.1
+integrator_type             diag
