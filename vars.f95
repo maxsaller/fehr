@@ -9,10 +9,11 @@ module variables
     double precision, parameter :: eps0 = 0.079577471546d0   ! Vacuum permitt.
 
     ! SYSTEM SPECIFIC CONSTANTS AND ENERGY LEVEL ARRAY
-    integer, parameter :: S = 2                              ! # of el.st.
-    double precision, parameter :: mu = 1.034d0              ! Dipole moment
+    integer, parameter :: S = 3                              ! # of el.st.
+    double precision, parameter :: mu12 = 1.034d0            ! Dipole moment
+    double precision, parameter :: mu23 = -2.536d0           ! Dipole moment
     double precision, parameter :: L = 236215.76557822127d0  ! Cavity length
-    double precision, dimension(S), parameter :: eps = [-0.6738d0, -0.2798d0]
+    double precision, dimension(S), parameter :: eps = [-0.6738d0, -0.2798d0, -0.1547d0]
 
     ! VARIABLES
     integer :: F              ! Number of bath DoFs
@@ -28,15 +29,15 @@ module variables
     ! ARRAYS
     double precision :: V(S,S)                      ! Potential energy matrix
     double precision :: XE(S), PE(S)                ! Mapping variables
-    double precision :: rho0(S), rhot(S)            ! Temporary density matrix
-    double complex, allocatable :: rho(:,:,:)       ! Subsystem density matrix 
+    double precision, allocatable :: pop(:,:)       ! Subsystem populations 
     double precision, allocatable :: G0(:)          ! State-independent force
+    double precision, allocatable :: Nsum(:)        ! Photon number
     double precision, allocatable :: Nph(:,:)       ! Photon number
     double precision, allocatable :: Int(:,:)       ! Cavity intensity
     double precision, allocatable :: zeta(:,:)      ! Cavity function
     double precision, allocatable :: xn(:), pn(:)   ! Bath positions & momenta
-    double precision, allocatable :: omega(:), c(:) ! Bath freq. & coefficients
-
+    double precision, allocatable :: omega(:)       ! Bath freqencies
+    double precision, allocatable :: c12(:), c23(:) ! Bath coupling coefficients
     ! LAPACK PARAMETERS
     integer :: info, lenwork                        ! LAPACK integer parameters
     double precision, allocatable :: work(:)        ! Work array for LAPACK

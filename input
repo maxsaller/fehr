@@ -1,8 +1,8 @@
-initial_electronic_state    22
+initial_electronic_state    33
 number_of_bath_DoFs         200
-number_of_trajectories      100000
+number_of_trajectories      1000
 number_of_timesteps         21000
 timestep_duration           0.1
 integrator_type             diag
 cavity_steps                1000
-time_slices                 1000
+intensity_interval          1000

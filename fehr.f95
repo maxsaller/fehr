@@ -90,13 +90,13 @@ subroutine read_input()
     close(11)
 
     write(6, '("Input parameters parsed:")')
-    write(6, '(2x,a16,1x,i8)') "- Initial state:", init_state
-    write(6, '(2x,a12,5x,i8)') "- Bath DoFs:", F
-    write(6, '(2x,a15,2x,i8)') "- Trajectories:", ntraj
-    write(6, '(2x,a12,5x,i8)') "- Timesteps:", tsteps
-    write(6, '(2x,a14,6x,f5.3)') "- TS duration:", dt
-    write(6, '(2x,a15,2x,i8)') "- Cavity steps:", cav_steps
-    write(6, '(2x,a16,1x,i8)') "- Timestep skip:", tslice
+    write(6, '(2x,a16,4x,i8)') "- Initial state:", init_state
+    write(6, '(2x,a12,8x,i8)') "- Bath DoFs:", F
+    write(6, '(2x,a15,5x,i8)') "- Trajectories:", ntraj
+    write(6, '(2x,a12,8x,i8)') "- Timesteps:", tsteps
+    write(6, '(2x,a14,9x,f5.3)') "- TS duration:", dt
+    write(6, '(2x,a15,5x,i8)') "- Cavity steps:", cav_steps
+    write(6, '(2x,a19,1x,i8)') "- Intensity interval:", tslice
     write(6, '()')
 
 end subroutine read_input
@@ -118,20 +118,23 @@ subroutine allocate_arrays()
     allocate( work(lenwork) )
 
     ! Standard arrays
-    allocate( c(F) )
+    allocate( c12(F) )
+    allocate( c23(F) )
     allocate( xn(F) )
     allocate( pn(F) )
     allocate( G0(F) )
     allocate( omega(F) )
-    allocate( rho(tsteps+1,S,S) )
+    allocate( pop(tsteps+1,S) )
     allocate( zeta(F,cav_steps) )
-    allocate( Nph(tsteps/tslice + 1,F) )
+    allocate( Nsum(tsteps+1) )
+    allocate( Nph(tsteps+1,F) )
     allocate( Int(tsteps/tslice + 1,cav_steps) )
 
     ! Zeroing
+    Nsum(:) = 0.d0
     Nph(:,:) = 0.d0
     Int(:,:) = 0.d0
-    rho(:,:,:) = 0.d0
+    pop(:,:) = 0.d0
 
 end subroutine allocate_arrays
 
@@ -146,13 +149,15 @@ subroutine deallocate_arrays()
     deallocate( work )
 
     ! Standard arrays
-    deallocate( c )
+    deallocate( c12 )
+    deallocate( c23 )
     deallocate( xn )
     deallocate( pn )
     deallocate( G0 )
-    deallocate( rho )
+    deallocate( pop )
     deallocate( Nph )
     deallocate( Int )
+    deallocate( Nsum )
     deallocate( zeta )
     deallocate( omega )
 
@@ -174,12 +179,14 @@ subroutine bath_properties()
     do i = 1,F
         if ( d == L/2.d0 ) then ! If TLS @ of cavity, use cancellation of modes
             omega(i) = pi * sol * dble(2 * i - 1) / L 
-            c(i) = mu * omega(i) * dsqrt(2.d0/eps0/L) * (-1.d0)**(i+1)
+            c12(i) = mu12 * omega(i) * dsqrt(2.d0/eps0/L) * (-1.d0)**(i+1)
+            c23(i) = mu23 * omega(i) * dsqrt(2.d0/eps0/L) * (-1.d0)**(i+1)
         else
             omega(i) = pi * sol * dble(i) / L
-            c(i) = mu * omega(i) * dsqrt(2.d0/eps0/L) * sin(omega(i)/sol * d)
+            c12(i) = mu12 * omega(i) * dsqrt(2.d0/eps0/L) * sin(omega(i)/sol * d)
+            c23(i) = mu23 * omega(i) * dsqrt(2.d0/eps0/L) * sin(omega(i)/sol * d)
         end if
-        write(11, *) omega(i), c(i)
+        write(11, *) omega(i), c12(i), c23(i)
         do j = 1, cav_steps
             r = (j-1) * L/(cav_steps-1)
             zeta(i,j) = dsqrt(omega(i)/eps0/L) * sin(omega(i)/sol * r)
@@ -230,6 +237,9 @@ subroutine sample_electronic(tj)
             
             case ( 22 )
             write(6, '(2x,"- Subsystem initial conditions: |2><2|")')
+
+            case ( 33 )
+            write(6, '(2x,"- Subsystem initial conditions: |3><3|")')
         end select
     end if
 
@@ -239,11 +249,22 @@ subroutine sample_electronic(tj)
             PE(1) = dsqrt(2.d0) * sin(ran(1)*2.d0*pi)
             XE(2) = 0.d0
             PE(2) = 0.d0
+            XE(3) = 0.d0
+            PE(3) = 0.d0
     else if ( init_state == 22 ) then
             XE(2) = dsqrt(2.d0) * cos(ran(1)*2.d0*pi)
             PE(2) = dsqrt(2.d0) * sin(ran(1)*2.d0*pi)
             XE(1) = 0.d0
             PE(1) = 0.d0
+            XE(3) = 0.d0
+            PE(3) = 0.d0
+    else if ( init_state == 33 ) then
+            XE(3) = dsqrt(2.d0) * cos(ran(1)*2.d0*pi)
+            PE(3) = dsqrt(2.d0) * sin(ran(1)*2.d0*pi)
+            XE(1) = 0.d0
+            PE(1) = 0.d0
+            XE(2) = 0.d0
+            PE(2) = 0.d0
     end if
 
 end subroutine sample_electronic
@@ -260,26 +281,21 @@ subroutine calculate_obs(ts)
 
     ! Populations
     do i = 1, S
-        rhot(i) = 0.5d0 * (XE(i)**2 + PE(i)**2)
-        if ( ts == 1 ) rho0(i) = rhot(i)
-        rho(ts,i,i) = rho(ts,i,i) + rhot(i)
+        pop(ts,i) = pop(ts,i) + 0.5d0 * (XE(i)**2 + PE(i)**2)
     end do
 
     ! Coherences
-    sigx = XE(1)*XE(2) + PE(1)*PE(2)
-    sigy = XE(1)*PE(2) - PE(1)*XE(2)
-    rho(ts,1,2) = rho(ts,1,2) + dcmplx(sigx,-sigy)
-    rho(ts,2,1) = rho(ts,2,1) + dcmplx(sigx, sigy)
+    ! sigx = XE(1)*XE(2) + PE(1)*PE(2)
+    ! sigy = XE(1)*PE(2) - PE(1)*XE(2)
+    ! rho(ts,1,2) = rho(ts,1,2) + dcmplx(sigx,-sigy)
+    ! rho(ts,2,1) = rho(ts,2,1) + dcmplx(sigx, sigy)
 
     ! Photon number
-    inst = mod(init_state,10)
-    if ( mod((ts-1),tslice) == 0 ) then
-        do i = 1, F
-            np = 0.5d0 * (pn(i)**2/omega(i) + xn(i)**2*omega(i) - 1)
-            Nph((ts-1)/tslice + 1,i) = Nph((ts-1)/tslice + 1,i) + &
-                rho0(inst) * ( rhot(1) + rhot(2) ) * np
-        end do
-    end if
+    do i = 1, F
+        np = 0.5d0 * (pn(i)*pn(i)/omega(i) + omega(i)*xn(i)*xn(i) - 1)
+        Nph(ts,i) = Nph(ts,i) + np
+        Nsum(ts) = Nsum(ts) + np
+    end do
 
     ! Cavity intensity
     if ( mod((ts-1),tslice) == 0 ) then
@@ -304,27 +320,23 @@ subroutine average_obs()
 
     write(6, '(//,"Averaging and outputting observables:")')
 
-    open(11, file="rho.out", status="unknown", action="write")
+    open(11, file="pop.out", status="unknown", action="write")
     write(fmt,*) "(f10.4,6(2x,ES13.5))"
-    rho(:,:,:) = rho(:,:,:) / dble(ntraj)
+    pop(:,:) = pop(:,:) / dble(ntraj)
     do i = 1,tsteps+1
-        write(11,fmt) dble(i-1)*dt, &
-                      real(rho(i,1,1)), real(rho(i,1,2)), aimag(rho(i,1,2)), &
-                      real(rho(i,2,1)), aimag(rho(i,2,1)), real(rho(i,2,2))
+        write(11,fmt) dble(i-1)*dt, pop(i,1), pop(i,2), pop(i,3)
     end do
-    write(6,'(2x,"- Wrote subsystem density matrix to rho.out")')
+    write(6,'(2x,"- Wrote subsystem populations to pop.out")')
     close(11)
 
     open(11, file="Nph.out", status="unknown", action="write")
     write(fmt,'(a7,i3,a12)') "(f10.4,",F+1,"(2x,ES13.5))"
+    Nsum(:) = Nsum(:)/dble(ntraj)
     Nph(:,:) = Nph(:,:)/dble(ntraj)
     do i = 1, tsteps+1
-        if ( mod((i-1),tslice) == 0 ) then
-            write(11,fmt) (i-1) * dt, sum(Nph((i-1)/tslice + 1,:)), &
-                          (Nph((i-1)/tslice + 1,j),j=1,F)
-        end if
+        write(11,fmt) (i-1) * dt, Nsum(i), (Nph(i,j),j=1,F)
     end do
-    write(6,'(2x,"- Wrote per DoF photon numbers to Nph.out")')
+    write(6,'(2x,"- Wrote average and per DoF photon numbers to Nph.out")')
     close(11)
 
     open(11, file="Int.out", status="unknown", action="write")
@@ -357,7 +369,8 @@ subroutine step_vverlet()
     ! Half step in nuclear momenta
     do i = 1,F
         pn(i) = pn(i) - hdt * G0(i)
-        pn(i) = pn(i) - hdt * (c(i)*(XE(1)*XE(2) + PE(1)*PE(2)))
+        pn(i) = pn(i) - hdt * (c12(i)*(XE(1)*XE(2) + PE(1)*PE(2))) - &
+                        hdt * (c23(i)*(XE(2)*XE(3) + PE(2)*PE(3)))
     end do
 
     ! Half step in mapping momenta
@@ -379,7 +392,8 @@ subroutine step_vverlet()
     ! Half step in nuclear momenta
     do i = 1,F
         pn(i) = pn(i) - hdt * G0(i)
-        pn(i) = pn(i) - hdt * (c(i)*(XE(1)*XE(2) + PE(1)*PE(2)))
+        pn(i) = pn(i) - hdt * (c12(i)*(XE(1)*XE(2) + PE(1)*PE(2))) - &
+                        hdt * (c23(i)*(XE(2)*XE(3) + PE(2)*PE(3)))
     end do
 
 end subroutine step_vverlet
@@ -411,7 +425,8 @@ subroutine step_diag
     ! Half step in nuclear momenta
     do i = 1,F
         pn(i) = pn(i) - hdt * G0(i)
-        pn(i) = pn(i) - hdt * (c(i)*(XE(1)*XE(2) + PE(1)*PE(2)))
+        pn(i) = pn(i) - hdt * (c12(i)*(XE(1)*XE(2) + PE(1)*PE(2))) - &
+                        hdt * (c23(i)*(XE(2)*XE(3) + PE(2)*PE(3)))
     end do
 
     ! Full step in nuclear positions
@@ -423,7 +438,8 @@ subroutine step_diag
     call potential_force()
     do i = 1,F
         pn(i) = pn(i) - hdt * G0(i)
-        pn(i) = pn(i) - hdt * (c(i)*(XE(1)*XE(2) + PE(1)*PE(2)))
+        pn(i) = pn(i) - hdt * (c12(i)*(XE(1)*XE(2) + PE(1)*PE(2))) - &
+                        hdt * (c23(i)*(XE(2)*XE(3) + PE(2)*PE(3)))
     end do
 
     ! Half step in mapping variables
@@ -457,9 +473,12 @@ subroutine potential_force()
     V(:,:) = 0.d0
     V(1,1) = eps(1)
     V(2,2) = eps(2)
+    V(3,3) = eps(3)
     do i = 1,F
-        V(1,2) = V(1,2) + c(i) * xn(i)
-        V(2,1) = V(2,1) + c(i) * xn(i)
+        V(1,2) = V(1,2) + c12(i) * xn(i)
+        V(2,1) = V(2,1) + c12(i) * xn(i)
+        V(2,3) = V(2,3) + c23(i) * xn(i)
+        V(3,2) = V(3,2) + c23(i) * xn(i)
     end do
 
     ! Shift trace of v. note that g is already traceless
