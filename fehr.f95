@@ -85,14 +85,18 @@ subroutine read_input()
     read(11, *) dum, tsteps
     read(11, *) dum, dt
     read(11, *) dum, intgt
+    read(11, *) dum, cav_steps
+    read(11, *) dum, tslice
     close(11)
 
-    write(6, '("> Input parameters parsed:")')
+    write(6, '("Input parameters parsed:")')
     write(6, '(2x,a16,1x,i8)') "- Initial state:", init_state
     write(6, '(2x,a12,5x,i8)') "- Bath DoFs:", F
     write(6, '(2x,a15,2x,i8)') "- Trajectories:", ntraj
     write(6, '(2x,a12,5x,i8)') "- Timesteps:", tsteps
     write(6, '(2x,a14,6x,f5.3)') "- TS duration:", dt
+    write(6, '(2x,a15,2x,i8)') "- Cavity steps:", cav_steps
+    write(6, '(2x,a16,1x,i8)') "- Timestep skip:", tslice
     write(6, '()')
 
 end subroutine read_input
@@ -103,12 +107,13 @@ subroutine allocate_arrays()
 
     use variables
     implicit none
+    integer :: i=1
     double precision :: evec(S,S), eval(S)
 
     ! LAPACK work array
-    allocate( work(1) )
+    allocate( work(i) )
     call dsyev("V", "U", S, evec, S, eval, work, -1, info)
-    lenwork = int(work(1))
+    lenwork = idint(work(i))
     deallocate(work)
     allocate( work(lenwork) )
 
@@ -119,8 +124,13 @@ subroutine allocate_arrays()
     allocate( G0(F) )
     allocate( omega(F) )
     allocate( rho(tsteps+1,S,S) )
+    allocate( zeta(F,cav_steps) )
+    allocate( Nph(tsteps/tslice + 1,F) )
+    allocate( Int(tsteps/tslice + 1,cav_steps) )
 
     ! Zeroing
+    Nph(:,:) = 0.d0
+    Int(:,:) = 0.d0
     rho(:,:,:) = 0.d0
 
 end subroutine allocate_arrays
@@ -141,6 +151,9 @@ subroutine deallocate_arrays()
     deallocate( pn )
     deallocate( G0 )
     deallocate( rho )
+    deallocate( Nph )
+    deallocate( Int )
+    deallocate( zeta )
     deallocate( omega )
 
 end subroutine deallocate_arrays
@@ -152,7 +165,7 @@ subroutine bath_properties()
     use variables
     implicit none
     integer :: i,j
-    double precision :: d
+    double precision :: d,r
 
     ! Set position of two-level system in the cavity
     d = L/2.d0
@@ -167,6 +180,10 @@ subroutine bath_properties()
             c(i) = mu * omega(i) * dsqrt(2.d0/eps0/L) * sin(omega(i)/sol * d)
         end if
         write(11, *) omega(i), c(i)
+        do j = 1, cav_steps
+            r = (j-1) * L/(cav_steps-1)
+            zeta(i,j) = dsqrt(omega(i)/eps0/L) * sin(omega(i)/sol * r)
+        end do
     end do
     close(11)
 
@@ -237,21 +254,42 @@ subroutine calculate_obs(ts)
 
     use variables
     implicit none
-    integer :: i
+    integer :: i,j,inst
     integer, intent(in) :: ts
-    double precision :: sigx, sigy
+    double precision :: sigx, sigy, np, fisum, nosum
 
     ! Populations
     do i = 1, S
-        rho(ts,i,i) = rho(ts,i,i) + 0.5d0 * (XE(i)**2 + PE(i)**2)
+        rhot(i) = 0.5d0 * (XE(i)**2 + PE(i)**2)
+        if ( ts == 1 ) rho0(i) = rhot(i)
+        rho(ts,i,i) = rho(ts,i,i) + rhot(i)
     end do
 
     ! Coherences
     sigx = XE(1)*XE(2) + PE(1)*PE(2)
     sigy = XE(1)*PE(2) - PE(1)*XE(2)
-    rho(ts,1,2) = rho(ts,1,2) + (sigx - eye*sigy)
-    rho(ts,2,1) = rho(ts,2,1) + (sigx + eye*sigy)
+    rho(ts,1,2) = rho(ts,1,2) + dcmplx(sigx,-sigy)
+    rho(ts,2,1) = rho(ts,2,1) + dcmplx(sigx, sigy)
 
+    ! Photon number
+    inst = mod(init_state,10)
+    if ( mod((ts-1),tslice) == 0 ) then
+        do i = 1, F
+            np = 0.5d0 * (pn(i)**2/omega(i) + xn(i)**2*omega(i) - 1)
+            Nph((ts-1)/tslice + 1,i) = Nph((ts-1)/tslice + 1,i) + &
+                rho0(inst) * ( rhot(1) + rhot(2) ) * np
+        end do
+    end if
+
+    ! Cavity intensity
+    if ( mod((ts-1),tslice) == 0 ) then
+        do i = 1, cav_steps
+            fisum = sum(dsqrt(2*omega(:))*zeta(:,i)*xn(:))
+            nosum = sum(zeta(:,i)**2)
+            Int((ts-1)/tslice + 1,i) = Int((ts-1)/tslice + 1,i) + &
+                                       (fisum*fisum - nosum)
+        end do
+    end if
 
 end subroutine calculate_obs
 
@@ -261,10 +299,10 @@ subroutine average_obs()
 
     use variables
     implicit none
-    integer :: i
+    integer :: i,j
     character(len=120) :: fmt
 
-    write(6, '("Averaging and outputting observables:")')
+    write(6, '(//,"Averaging and outputting observables:")')
 
     open(11, file="rho.out", status="unknown", action="write")
     write(fmt,*) "(f10.4,6(2x,ES13.5))"
@@ -274,6 +312,30 @@ subroutine average_obs()
                       real(rho(i,1,1)), real(rho(i,1,2)), aimag(rho(i,1,2)), &
                       real(rho(i,2,1)), aimag(rho(i,2,1)), real(rho(i,2,2))
     end do
+    write(6,'(2x,"- Wrote subsystem density matrix to rho.out")')
+    close(11)
+
+    open(11, file="Nph.out", status="unknown", action="write")
+    write(fmt,'(a7,i3,a12)') "(f10.4,",F+1,"(2x,ES13.5))"
+    Nph(:,:) = Nph(:,:)/dble(ntraj)
+    do i = 1, tsteps+1
+        if ( mod((i-1),tslice) == 0 ) then
+            write(11,fmt) (i-1) * dt, sum(Nph((i-1)/tslice + 1,:)), &
+                          (Nph((i-1)/tslice + 1,j),j=1,F)
+        end if
+    end do
+    write(6,'(2x,"- Wrote per DoF photon numbers to Nph.out")')
+    close(11)
+
+    open(11, file="Int.out", status="unknown", action="write")
+    write(fmt,'(a7,i4,a12)') "(f10.4,",cav_steps,"(2x,ES13.5))"
+    Int(:,:) = Int(:,:)/dble(ntraj)
+    do i = 1, tsteps+1
+        if ( mod((i-1),tslice) == 0 ) then
+            write(11,fmt) (i-1) * dt, (Int((i-1)/tslice + 1,j),j=1,cav_steps)
+        end if
+    end do
+    write(6,'(2x,"- Wrote cavity intensity to Int.out")')
     close(11)
 
 end subroutine average_obs

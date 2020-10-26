@@ -4,3 +4,5 @@ number_of_trajectories      100000
 number_of_timesteps         21000
 timestep_duration           0.1
 integrator_type             diag
+cavity_steps                1000
+time_slices                 1000

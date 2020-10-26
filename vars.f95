@@ -18,7 +18,9 @@ module variables
     integer :: F              ! Number of bath DoFs
     integer :: ntraj          ! Number of trajectories
     integer :: tsteps         ! Number of TS per traj.
+    integer :: tslice         ! Timestep skip for cavity intensity and photon #
     integer :: init_state     ! Initial electronic state
+    integer :: cav_steps      ! Number of cavity discretization steps
     double precision :: dt    ! TS duration
     double precision :: V0    ! State-independent potential
     character(len=14):: intgt ! Integrator type
@@ -26,8 +28,12 @@ module variables
     ! ARRAYS
     double precision :: V(S,S)                      ! Potential energy matrix
     double precision :: XE(S), PE(S)                ! Mapping variables
+    double precision :: rho0(S), rhot(S)            ! Temporary density matrix
     double complex, allocatable :: rho(:,:,:)       ! Subsystem density matrix 
     double precision, allocatable :: G0(:)          ! State-independent force
+    double precision, allocatable :: Nph(:,:)       ! Photon number
+    double precision, allocatable :: Int(:,:)       ! Cavity intensity
+    double precision, allocatable :: zeta(:,:)      ! Cavity function
     double precision, allocatable :: xn(:), pn(:)   ! Bath positions & momenta
     double precision, allocatable :: omega(:), c(:) ! Bath freq. & coefficients
 
